@@ -136,6 +136,9 @@
 
     <section aria-label="Новый адрес">
       <h2>Новый адрес</h2>
+      <button class="secondary" id="a-mic" type="button">Продиктовать адрес голосом</button>
+      <p class="hint">Скажите, например: «Нивская 5 подъезд 2 этаж 3 квартира 12». Поля заполнятся сами, их можно поправить.</p>
+      <p class="status" id="a-voice-status" role="status"></p>
       <div class="row">
         <div>
           <label for="a-street">Улица</label>
@@ -162,10 +165,13 @@
       </div>
       <label for="a-code">Домофон или код</label>
       <input id="a-code" type="text" placeholder="например, не работает / код 12К45">
+      <label for="a-phone">Телефон клиента</label>
+      <input id="a-phone" type="tel" inputmode="tel" placeholder="например, 8 900 123-45-67">
       <label for="a-note">Заметка</label>
       <input id="a-note" type="text" placeholder="например, заезд со двора, собака, долго открывают">
+      <div class="buttons"><button class="secondary" id="a-note-mic" type="button">Продиктовать заметку</button></div>
       <button class="primary" id="a-add" type="button">Сохранить адрес</button>
-      <p class="hint">Имена и телефоны клиентов лучше не вписывать. Пишите про дом и подъезд, а не про людей.</p>
+      <p class="hint">Телефон хранится только в вашем устройстве и попадает в файл копии. Не отправляйте этот файл посторонним. Про людей лучше писать нейтрально.</p>
     </section>
 
     <section aria-label="Сохранённые адреса">
@@ -453,12 +459,13 @@
       floor: $('a-floor').value.trim(),
       flat: $('a-flat').value.trim(),
       code: $('a-code').value.trim(),
+      phone: $('a-phone').value.trim(),
       note: $('a-note').value.trim(),
       lat: null,
       lon: null
     });
     save();
-    ['a-street', 'a-house', 'a-entrance', 'a-floor', 'a-flat', 'a-code', 'a-note'].forEach(function (id) { $(id).value = ''; });
+    ['a-street', 'a-house', 'a-entrance', 'a-floor', 'a-flat', 'a-code', 'a-phone', 'a-note'].forEach(function (id) { $(id).value = ''; });
     renderClients();
   });
 
@@ -479,7 +486,7 @@
     var list = $('a-list');
     list.innerHTML = '';
     var items = data.clients.filter(function (c) {
-      return !q || (c.street + ' ' + c.house + ' ' + describe(c)).toLowerCase().indexOf(q) !== -1;
+      return !q || (c.street + ' ' + c.house + ' ' + describe(c) + ' ' + (c.phone || '')).toLowerCase().indexOf(q) !== -1;
     }).sort(function (a, b) {
       return (a.street + ' ' + a.house).localeCompare(b.street + ' ' + b.house, 'ru', { numeric: true });
     });
@@ -502,7 +509,7 @@
       main.textContent = c.street + ' ' + c.house;
       var sub = document.createElement('div');
       sub.className = 'li-sub';
-      sub.textContent = describe(c) || 'Без подробностей';
+      sub.textContent = (describe(c) || 'Без подробностей') + (c.phone ? ', тел. ' + c.phone : '');
       box.appendChild(main);
       box.appendChild(sub);
       var del = document.createElement('button');
@@ -536,6 +543,13 @@
       ya.href = 'https://yandex.ru/maps/?text=' + encodeURIComponent(fullAddress(c));
       ya.target = '_blank';
       ya.rel = 'noopener';
+      var tel = c.phone ? telLink(c.phone) : null;
+      if (tel) {
+        var call = document.createElement('a');
+        call.textContent = 'Позвонить';
+        call.href = tel;
+        actions.appendChild(call);
+      }
       actions.appendChild(onMap);
       actions.appendChild(gis);
       actions.appendChild(ya);
@@ -545,6 +559,75 @@
       list.appendChild(li);
     });
   }
+
+  // ---------- Телефон: ссылка для звонка ----------
+  // Ссылка вида tel:+7... на телефоне открывает набор номера. Сам звонок делает телефон, не приложение.
+  function telLink(p) {
+    var d = String(p).replace(/\D/g, '');
+    if (d.length === 11 && (d.charAt(0) === '8' || d.charAt(0) === '7')) { d = '7' + d.slice(1); }
+    else if (d.length === 10) { d = '7' + d; }
+    if (d.length === 0) { return null; }
+    return d.length < 10 ? 'tel:' + d : 'tel:+' + d;
+  }
+
+  // ---------- Голосовой ввод ----------
+  // Распознавание речи (Web Speech API, «Веб Спич ЭйПиАй») встроено в некоторые браузеры
+  function dictate(onText) {
+    var status = $('a-voice-status');
+    var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) {
+      status.textContent = 'Этот браузер не умеет слушать голос. Нажмите на поле и используйте значок микрофона на клавиатуре телефона.';
+      return;
+    }
+    var rec = new SR();
+    rec.lang = 'ru-RU';
+    rec.interimResults = false;
+    rec.maxAlternatives = 1;
+    var got = false;
+    status.textContent = 'Слушаю, говорите…';
+    rec.onresult = function (e) {
+      got = true;
+      var t = e.results[0][0].transcript;
+      status.textContent = 'Распознано: «' + t + '»';
+      onText(t);
+    };
+    rec.onerror = function (e) {
+      got = true;
+      status.textContent = (e.error === 'not-allowed' || e.error === 'service-not-allowed')
+        ? 'Нет доступа к микрофону. Разрешите его для этого сайта в настройках браузера.'
+        : 'Не удалось распознать голос. Проверьте интернет и попробуйте ещё раз.';
+    };
+    rec.onend = function () {
+      if (!got) { status.textContent = 'Ничего не расслышано. Попробуйте ещё раз.'; }
+    };
+    try { rec.start(); } catch (e) { status.textContent = 'Не удалось включить микрофон.'; }
+  }
+
+  // Разбор фразы «Нивская 5 подъезд 2 этаж 3 квартира 12» по полям
+  function fillFromSpeech(text) {
+    var s = text.toLowerCase().replace(/[,.]/g, ' ');
+    s = s.replace(/подъезд\s*(?:номер\s*)?(\d+)/, function (m, n) { $('a-entrance').value = n; return ' '; });
+    s = s.replace(/этаж\s*(?:номер\s*)?(\d+)/, function (m, n) { $('a-floor').value = n; return ' '; });
+    s = s.replace(/(?:квартира|кв)\s*(?:номер\s*)?(\d+)/, function (m, n) { $('a-flat').value = n; return ' '; });
+    s = s.replace(/(^|\s)(?:дом|улица|ул)(?=\s|$)/g, ' ');
+    var words = s.split(/\s+/).filter(Boolean);
+    var idx = -1;
+    for (var i = words.length - 1; i >= 0; i--) {
+      if (/\d/.test(words[i])) { idx = i; break; }
+    }
+    var street = idx === -1 ? words.join(' ') : words.slice(0, idx).join(' ');
+    var house = idx === -1 ? '' : words[idx];
+    if (street) { $('a-street').value = street.charAt(0).toUpperCase() + street.slice(1); }
+    if (house) { $('a-house').value = house; }
+  }
+
+  $('a-mic').addEventListener('click', function () { dictate(fillFromSpeech); });
+  $('a-note-mic').addEventListener('click', function () {
+    dictate(function (t) {
+      var cur = $('a-note').value.trim();
+      $('a-note').value = cur ? cur + ', ' + t : t;
+    });
+  });
 
   // ---------- Запуск ----------
   function start() {
