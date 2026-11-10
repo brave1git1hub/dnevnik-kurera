@@ -74,6 +74,19 @@
   .client-top { display: flex; justify-content: space-between; gap: 8px; align-items: flex-start; }
   .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
   .actions a, .actions button { padding: 8px 12px; font-size: 0.9rem; border: 1px solid var(--line); border-radius: 8px; background: var(--snow); color: var(--ink); text-decoration: none; }
+
+  /* Календарь смен */
+  .cal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .cal-head h2 { margin: 0; }
+  .cal-week, .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+  .cal-week span { text-align: center; color: var(--muted); font-size: 0.8rem; }
+  .cal-day { display: flex; flex-direction: column; align-items: center; min-height: 64px; padding: 4px 2px; border: 1px solid var(--line); border-radius: 8px; background: var(--snow); color: var(--ink); font-size: 1rem; overflow: hidden; }
+  .cal-day.today { border: 2px solid var(--ink); }
+  .cal-day.sel { background: #fbe9a6; border-color: var(--ink); }
+  .cal-n { font-weight: 700; }
+  .cal-s { font-size: 0.65rem; line-height: 1.1; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cal-m { font-size: 0.7rem; color: var(--profit); }
+  .cal-m.neg { color: var(--loss); }
 </style>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
 </head>
@@ -83,6 +96,7 @@
 
   <div class="nav" id="nav">
     <button type="button" data-v="diary" aria-pressed="true">Дневник</button>
+    <button type="button" data-v="cal" aria-pressed="false">Календарь</button>
     <button type="button" data-v="addr" aria-pressed="false">Адреса и карта</button>
   </div>
 
@@ -93,6 +107,7 @@
       <button type="button" data-p="week" aria-pressed="false">Неделя</button>
       <button type="button" data-p="month" aria-pressed="false">Месяц</button>
     </div>
+    <p class="hint" id="shift-line" style="margin:0 0 12px"></p>
     <div class="hero-label">Чистая прибыль</div>
     <div class="hero-value" id="net">0 ₽</div>
     <div class="grid">
@@ -125,6 +140,27 @@
     <ul id="list"></ul>
   </section>
 
+  </div>
+
+  <div id="view-cal" hidden>
+    <section aria-label="Календарь смен">
+      <div class="cal-head">
+        <button class="secondary" id="cal-prev" type="button" aria-label="Прошлый месяц">‹</button>
+        <h2 id="cal-title"></h2>
+        <button class="secondary" id="cal-next" type="button" aria-label="Следующий месяц">›</button>
+      </div>
+      <div class="cal-week" aria-hidden="true"><span>Пн</span><span>Вт</span><span>Ср</span><span>Чт</span><span>Пт</span><span>Сб</span><span>Вс</span></div>
+      <div class="cal-grid" id="cal-grid"></div>
+      <p class="hint" id="cal-total"></p>
+    </section>
+    <section aria-label="Выбранный день">
+      <h2>Смена: <span id="cal-date"></span></h2>
+      <label for="cal-shift">Название смены</label>
+      <input id="cal-shift" type="text" list="shift-names" placeholder="например, вечерняя, Яндекс Еда">
+      <datalist id="shift-names"></datalist>
+      <button class="primary" id="cal-save" type="button">Сохранить название</button>
+      <ul id="cal-orders" style="margin-top:12px"></ul>
+    </section>
   </div>
 
   <div id="view-addr" hidden>
@@ -268,6 +304,8 @@
     $('fuel').textContent = money.format(fuel);
     $('km').textContent = num.format(km) + ' км';
     $('perkm').textContent = km > 0 ? money.format(net / km) : '—';
+    var sh = data.shifts && data.shifts[iso(new Date())];
+    $('shift-line').textContent = sh ? 'Смена сегодня: ' + sh : 'Название смены можно задать на вкладке «Календарь».';
 
     var list = $('list');
     list.innerHTML = '';
@@ -380,11 +418,14 @@
   // ---------- Вкладки ----------
   function showView(v) {
     $('view-diary').hidden = (v !== 'diary');
+    $('view-cal').hidden = (v !== 'cal');
     $('view-addr').hidden = (v !== 'addr');
     var b = $('nav').querySelectorAll('button');
     for (var i = 0; i < b.length; i++) {
       b[i].setAttribute('aria-pressed', b[i].getAttribute('data-v') === v ? 'true' : 'false');
     }
+    if (v === 'diary') { render(); }
+    if (v === 'cal') { renderCal(); }
     if (v === 'addr') { initMap(); renderClients(); }
   }
   $('nav').addEventListener('click', function (e) {
@@ -392,9 +433,118 @@
     if (v) { showView(v); }
   });
 
+  // ---------- Календарь смен ----------
+  var MONTHS = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
+  var calYear = new Date().getFullYear();
+  var calMonth = new Date().getMonth();
+  var calSel = iso(new Date());
+
+  function dayStats(ds) {
+    var earned = 0, fuel = 0, count = 0;
+    data.orders.forEach(function (o) {
+      if (o.date === ds) { earned += o.sum; fuel += o.fuel; count++; }
+    });
+    return { net: earned - fuel, count: count };
+  }
+
+  function makeDay(d) {
+    var ds = calYear + '-' + pad(calMonth + 1) + '-' + pad(d);
+    var st = dayStats(ds);
+    var name = data.shifts[ds] || '';
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'cal-day' + (ds === iso(new Date()) ? ' today' : '') + (ds === calSel ? ' sel' : '');
+    b.setAttribute('aria-label', showDate(ds) + (name ? ', смена ' + name : '') + (st.count ? ', прибыль ' + money.format(st.net) : ''));
+    var n = document.createElement('span');
+    n.className = 'cal-n';
+    n.textContent = d;
+    var sname = document.createElement('span');
+    sname.className = 'cal-s';
+    sname.textContent = name;
+    var m = document.createElement('span');
+    m.className = 'cal-m' + (st.net < 0 ? ' neg' : '');
+    m.textContent = st.count ? num.format(Math.round(st.net)) : '';
+    b.appendChild(n);
+    b.appendChild(sname);
+    b.appendChild(m);
+    b.addEventListener('click', function () { calSel = ds; renderCal(); });
+    return b;
+  }
+
+  function renderCal() {
+    $('cal-title').textContent = MONTHS[calMonth] + ' ' + calYear;
+    var grid = $('cal-grid');
+    grid.innerHTML = '';
+    var offset = (new Date(calYear, calMonth, 1).getDay() + 6) % 7;
+    var days = new Date(calYear, calMonth + 1, 0).getDate();
+    for (var i = 0; i < offset; i++) { grid.appendChild(document.createElement('div')); }
+    for (var d = 1; d <= days; d++) { grid.appendChild(makeDay(d)); }
+
+    // Итог месяца
+    var prefix = calYear + '-' + pad(calMonth + 1) + '-';
+    var net = 0, shifts = 0;
+    data.orders.forEach(function (o) { if (o.date.indexOf(prefix) === 0) { net += o.sum - o.fuel; } });
+    Object.keys(data.shifts).forEach(function (k) { if (k.indexOf(prefix) === 0) { shifts++; } });
+    $('cal-total').textContent = 'За месяц: смен с названием — ' + shifts + ', чистая прибыль — ' + money.format(net);
+
+    // Выбранный день
+    $('cal-date').textContent = showDate(calSel);
+    $('cal-shift').value = data.shifts[calSel] || '';
+    var names = {};
+    Object.keys(data.shifts).forEach(function (k) { names[data.shifts[k]] = true; });
+    var dl = $('shift-names');
+    dl.innerHTML = '';
+    Object.keys(names).forEach(function (nm) {
+      var o = document.createElement('option');
+      o.value = nm;
+      dl.appendChild(o);
+    });
+    var ul = $('cal-orders');
+    ul.innerHTML = '';
+    var items = data.orders.filter(function (o) { return o.date === calSel; });
+    if (items.length === 0) {
+      var e = document.createElement('li');
+      e.className = 'empty';
+      e.textContent = 'В этот день заказов нет.';
+      ul.appendChild(e);
+    }
+    items.forEach(function (o) {
+      var li = document.createElement('li');
+      var box = document.createElement('div');
+      var main = document.createElement('div');
+      main.className = 'li-main';
+      main.textContent = money.format(o.sum);
+      var sub = document.createElement('div');
+      sub.className = 'li-sub';
+      sub.textContent = num.format(o.km) + ' км, бензин ' + money.format(o.fuel);
+      box.appendChild(main);
+      box.appendChild(sub);
+      li.appendChild(box);
+      ul.appendChild(li);
+    });
+  }
+
+  $('cal-prev').addEventListener('click', function () {
+    calMonth--;
+    if (calMonth < 0) { calMonth = 11; calYear--; }
+    renderCal();
+  });
+  $('cal-next').addEventListener('click', function () {
+    calMonth++;
+    if (calMonth > 11) { calMonth = 0; calYear++; }
+    renderCal();
+  });
+  $('cal-save').addEventListener('click', function () {
+    var name = $('cal-shift').value.trim();
+    if (name) { data.shifts[calSel] = name; } else { delete data.shifts[calSel]; }
+    save();
+    renderCal();
+  });
+
   // ---------- Карта (OpenStreetMap через Leaflet) ----------
   var map = null;
   var marker = null;
+  var pendingPoint = null;   // адрес, для которого пользователь сейчас ставит точку на карте
 
   function initMap() {
     if (map) { setTimeout(function () { map.invalidateSize(); }, 50); return; }
@@ -407,6 +557,17 @@
       maxZoom: 19,
       attribution: '© участники OpenStreetMap'
     }).addTo(map);
+    // Нажатие на карту: если выбрана «Указать точку», запоминаем место
+    map.on('click', function (e) {
+      if (!pendingPoint) { return; }
+      pendingPoint.lat = e.latlng.lat;
+      pendingPoint.lon = e.latlng.lng;
+      save();
+      placeMarker(pendingPoint);
+      $('map-status').textContent = 'Точка сохранена. Теперь кнопки 2ГИС и Яндекс построят маршрут к ней.';
+      pendingPoint = null;
+      renderClients();
+    });
   }
 
   function fullAddress(c) {
@@ -421,13 +582,8 @@
     map.setView([c.lat, c.lon], 17);
   }
 
-  // Поиск адреса на карте: сервис Nominatim (Номинатим) от OpenStreetMap, бесплатный
-  function showOnMap(c) {
-    var status = $('map-status');
-    if (!map) { status.textContent = 'Карта не загрузилась. Откройте адрес в 2ГИС или Яндекс Картах.'; return; }
-    window.scrollTo(0, 0);
-    if (c.lat) { placeMarker(c); status.textContent = ''; return; }
-    status.textContent = 'Ищем адрес…';
+  // Поиск координат адреса: Nominatim (Номинатим) от OpenStreetMap, бесплатный
+  function geocode(c, done) {
     fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&accept-language=ru&q=' + encodeURIComponent(fullAddress(c)))
       .then(function (r) { return r.json(); })
       .then(function (res) {
@@ -435,15 +591,31 @@
           c.lat = parseFloat(res[0].lat);
           c.lon = parseFloat(res[0].lon);
           save();
-          placeMarker(c);
-          status.textContent = '';
+          done(true);
         } else {
-          status.textContent = 'Этот адрес не найден на карте OpenStreetMap. Откройте его в 2ГИС или Яндекс Картах.';
+          done(false);
         }
       })
-      .catch(function () {
-        status.textContent = 'Не удалось связаться с картой. Проверьте интернет.';
-      });
+      .catch(function () { done(false, true); });
+  }
+
+  function showOnMap(c) {
+    var status = $('map-status');
+    if (!map) { status.textContent = 'Карта не загрузилась. Откройте адрес в 2ГИС или Яндекс Картах.'; return; }
+    window.scrollTo(0, 0);
+    if (c.lat) { placeMarker(c); status.textContent = ''; return; }
+    status.textContent = 'Ищем адрес…';
+    geocode(c, function (ok, netErr) {
+      if (ok) {
+        placeMarker(c);
+        status.textContent = 'Место найдено приблизительно. Если метка не на том доме, нажмите «Указать точку».';
+        renderClients();
+      } else {
+        status.textContent = netErr
+          ? 'Не удалось связаться с картой. Проверьте интернет.'
+          : 'Адрес не найден на карте. Нажмите «Указать точку» и отметьте дом на карте.';
+      }
+    });
   }
 
   // ---------- Адреса клиентов ----------
@@ -451,7 +623,7 @@
     var street = $('a-street').value.trim();
     var house = $('a-house').value.trim();
     if (!street || !house) { alert('Впишите улицу и дом.'); return; }
-    data.clients.push({
+    var nc = {
       id: Date.now(),
       street: street,
       house: house,
@@ -463,10 +635,12 @@
       note: $('a-note').value.trim(),
       lat: null,
       lon: null
-    });
+    };
+    data.clients.push(nc);
     save();
     ['a-street', 'a-house', 'a-entrance', 'a-floor', 'a-flat', 'a-code', 'a-phone', 'a-note'].forEach(function (id) { $(id).value = ''; });
     renderClients();
+    geocode(nc, function (ok) { if (ok) { renderClients(); } });
   });
 
   $('a-search').addEventListener('input', renderClients);
@@ -534,15 +708,33 @@
       onMap.textContent = 'На карте';
       onMap.addEventListener('click', function () { showOnMap(c); });
       var gis = document.createElement('a');
-      gis.textContent = 'Открыть в 2ГИС';
-      gis.href = 'https://2gis.ru/search/' + encodeURIComponent(fullAddress(c));
+      var ya = document.createElement('a');
+      if (c.lat) {
+        // Есть координаты: открываем маршрут именно до этой точки
+        gis.textContent = 'Маршрут в 2ГИС';
+        gis.href = 'https://2gis.ru/directions/points/%7C' + c.lon + ',' + c.lat;
+        ya.textContent = 'Маршрут в Яндекс Картах';
+        ya.href = 'https://yandex.ru/maps/?rtext=~' + c.lat + ',' + c.lon + '&rtt=auto';
+      } else {
+        // Координат нет: запасной вариант, поиск по тексту адреса
+        gis.textContent = 'Найти в 2ГИС';
+        gis.href = 'https://2gis.ru/search/' + encodeURIComponent(fullAddress(c));
+        ya.textContent = 'Найти в Яндекс Картах';
+        ya.href = 'https://yandex.ru/maps/?text=' + encodeURIComponent(fullAddress(c));
+      }
       gis.target = '_blank';
       gis.rel = 'noopener';
-      var ya = document.createElement('a');
-      ya.textContent = 'Открыть в Яндекс Картах';
-      ya.href = 'https://yandex.ru/maps/?text=' + encodeURIComponent(fullAddress(c));
       ya.target = '_blank';
       ya.rel = 'noopener';
+      var pin = document.createElement('button');
+      pin.type = 'button';
+      pin.textContent = 'Указать точку';
+      pin.addEventListener('click', function () {
+        if (!map) { alert('Карта не загрузилась.'); return; }
+        pendingPoint = c;
+        window.scrollTo(0, 0);
+        $('map-status').textContent = 'Нажмите на карте место, где находится этот дом.';
+      });
       var tel = c.phone ? telLink(c.phone) : null;
       if (tel) {
         var call = document.createElement('a');
@@ -551,6 +743,7 @@
         actions.appendChild(call);
       }
       actions.appendChild(onMap);
+      actions.appendChild(pin);
       actions.appendChild(gis);
       actions.appendChild(ya);
 
@@ -603,9 +796,40 @@
     try { rec.start(); } catch (e) { status.textContent = 'Не удалось включить микрофон.'; }
   }
 
+  // Числа словами -> цифры («двадцать пять» -> 25)
+  var UNITS = { 'ноль': 0, 'один': 1, 'одна': 1, 'два': 2, 'две': 2, 'три': 3, 'четыре': 4, 'пять': 5, 'шесть': 6, 'семь': 7, 'восемь': 8, 'девять': 9, 'десять': 10, 'одиннадцать': 11, 'двенадцать': 12, 'тринадцать': 13, 'четырнадцать': 14, 'пятнадцать': 15, 'шестнадцать': 16, 'семнадцать': 17, 'восемнадцать': 18, 'девятнадцать': 19, 'двадцать': 20, 'тридцать': 30, 'сорок': 40, 'пятьдесят': 50, 'шестьдесят': 60, 'семьдесят': 70, 'восемьдесят': 80, 'девяносто': 90, 'сто': 100, 'двести': 200, 'триста': 300, 'четыреста': 400, 'пятьсот': 500, 'шестьсот': 600, 'семьсот': 700, 'восемьсот': 800, 'девятьсот': 900 };
+  var ORD = { 'первый': 1, 'первая': 1, 'второй': 2, 'вторая': 2, 'третий': 3, 'третья': 3, 'четвертый': 4, 'четвёртый': 4, 'четвертая': 4, 'пятый': 5, 'пятая': 5, 'шестой': 6, 'шестая': 6, 'седьмой': 7, 'седьмая': 7, 'восьмой': 8, 'восьмая': 8, 'девятый': 9, 'девятая': 9, 'десятый': 10, 'десятая': 10 };
+
+  function wordsToDigits(text) {
+    var w = text.split(/\s+/).filter(Boolean);
+    var out = [];
+    var i = 0;
+    while (i < w.length) {
+      // «второй подъезд», «третий этаж»: порядковые числа меняем только рядом с этими словами
+      if (ORD.hasOwnProperty(w[i]) && (w[i + 1] === 'подъезд' || w[i + 1] === 'этаж' || w[i - 1] === 'подъезд' || w[i - 1] === 'этаж')) {
+        out.push(String(ORD[w[i]]));
+        i++;
+        continue;
+      }
+      if (!UNITS.hasOwnProperty(w[i])) { out.push(w[i]); i++; continue; }
+      var j = i, sum = 0;
+      while (j < w.length && UNITS.hasOwnProperty(w[j])) { sum += UNITS[w[j]]; j++; }
+      if (i === 0) {
+        // Число в самом начале, скорее всего часть названия улицы («Сорок лет Победы»): не трогаем
+        for (var k = i; k < j; k++) { out.push(w[k]); }
+      } else {
+        out.push(String(sum));
+      }
+      i = j;
+    }
+    return out.join(' ');
+  }
+
   // Разбор фразы «Нивская 5 подъезд 2 этаж 3 квартира 12» по полям
   function fillFromSpeech(text) {
     var s = text.toLowerCase().replace(/[,.]/g, ' ');
+    s = s.replace(/(^|\s)(?:дом|улица|ул)(?=\s|$)/g, ' ');
+    s = wordsToDigits(s);
     s = s.replace(/подъезд\s*(?:номер\s*)?(\d+)/, function (m, n) { $('a-entrance').value = n; return ' '; });
     s = s.replace(/этаж\s*(?:номер\s*)?(\d+)/, function (m, n) { $('a-floor').value = n; return ' '; });
     s = s.replace(/(?:квартира|кв)\s*(?:номер\s*)?(\d+)/, function (m, n) { $('a-flat').value = n; return ' '; });
@@ -617,6 +841,7 @@
     }
     var street = idx === -1 ? words.join(' ') : words.slice(0, idx).join(' ');
     var house = idx === -1 ? '' : words[idx];
+    if (idx !== -1 && /^[а-я]$/.test(words[idx + 1] || '')) { house += words[idx + 1]; }
     if (street) { $('a-street').value = street.charAt(0).toUpperCase() + street.slice(1); }
     if (house) { $('a-house').value = house; }
   }
@@ -633,6 +858,7 @@
   function start() {
     // Если данные старые (без адресов и города), добавляем недостающее
     if (!Array.isArray(data.clients)) { data.clients = []; }
+    if (!data.shifts || typeof data.shifts !== 'object') { data.shifts = {}; }
     if (!data.settings.city) { data.settings.city = 'Полярные Зори, Мурманская область'; }
     $('l100').value = data.settings.l100;
     $('price').value = data.settings.price;
