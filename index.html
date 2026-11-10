@@ -60,12 +60,33 @@
   .buttons { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
   .pos { color: var(--profit); }
   .neg { color: var(--loss); }
+
+  /* Вкладки «Дневник» и «Адреса» */
+  .nav { display: flex; gap: 8px; margin-bottom: 16px; }
+  .nav button { flex: 1; padding: 12px; font-size: 1rem; border: 1px solid var(--ink); background: var(--card); color: var(--ink); border-radius: 8px; }
+  .nav button[aria-pressed="true"] { background: var(--ink); color: #fff; font-weight: 700; }
+
+  /* Карта и список адресов */
+  #map { height: 280px; border-radius: 10px; border: 1px solid var(--line); background: var(--snow); color: var(--muted); padding: 12px; }
+  #map.leaflet-container { padding: 0; }
+  .status { color: var(--muted); font-size: 0.9rem; min-height: 1.2em; margin: 8px 0 0; }
+  .client { flex-direction: column; align-items: stretch; }
+  .client-top { display: flex; justify-content: space-between; gap: 8px; align-items: flex-start; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .actions a, .actions button { padding: 8px 12px; font-size: 0.9rem; border: 1px solid var(--line); border-radius: 8px; background: var(--snow); color: var(--ink); text-decoration: none; }
 </style>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
 </head>
 <body>
 <main>
   <h1>Дневник курьера</h1>
 
+  <div class="nav" id="nav">
+    <button type="button" data-v="diary" aria-pressed="true">Дневник</button>
+    <button type="button" data-v="addr" aria-pressed="false">Адреса и карта</button>
+  </div>
+
+  <div id="view-diary">
   <section aria-label="Итоги">
     <div class="tabs" id="tabs">
       <button type="button" data-p="day" aria-pressed="true">Сегодня</button>
@@ -104,8 +125,61 @@
     <ul id="list"></ul>
   </section>
 
+  </div>
+
+  <div id="view-addr" hidden>
+    <section aria-label="Карта">
+      <h2>Карта</h2>
+      <div id="map">Загружаем карту…</div>
+      <p class="status" id="map-status" role="status"></p>
+    </section>
+
+    <section aria-label="Новый адрес">
+      <h2>Новый адрес</h2>
+      <div class="row">
+        <div>
+          <label for="a-street">Улица</label>
+          <input id="a-street" type="text" placeholder="например, Нивская">
+        </div>
+        <div>
+          <label for="a-house">Дом</label>
+          <input id="a-house" type="text" placeholder="например, 5">
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label for="a-entrance">Подъезд</label>
+          <input id="a-entrance" type="text">
+        </div>
+        <div>
+          <label for="a-floor">Этаж</label>
+          <input id="a-floor" type="text">
+        </div>
+        <div>
+          <label for="a-flat">Квартира</label>
+          <input id="a-flat" type="text">
+        </div>
+      </div>
+      <label for="a-code">Домофон или код</label>
+      <input id="a-code" type="text" placeholder="например, не работает / код 12К45">
+      <label for="a-note">Заметка</label>
+      <input id="a-note" type="text" placeholder="например, заезд со двора, собака, долго открывают">
+      <button class="primary" id="a-add" type="button">Сохранить адрес</button>
+      <p class="hint">Имена и телефоны клиентов лучше не вписывать. Пишите про дом и подъезд, а не про людей.</p>
+    </section>
+
+    <section aria-label="Сохранённые адреса">
+      <h2>Сохранённые адреса</h2>
+      <label for="a-search">Поиск по улице, дому или заметке</label>
+      <input id="a-search" type="search">
+      <ul id="a-list"></ul>
+    </section>
+  </div>
+
   <details>
-    <summary>Настройки бензина</summary>
+    <summary>Настройки</summary>
+    <label for="city">Город (для поиска адресов)</label>
+    <input id="city" type="text">
     <label for="l100">Расход машины, литров на 100 км</label>
     <input id="l100" type="number" inputmode="decimal" min="0" step="0.1">
     <label for="price">Цена литра бензина, ₽</label>
@@ -124,6 +198,8 @@
   </details>
 </main>
 
+<!-- Leaflet (Лифлет) — бесплатная библиотека карт. Если она не загрузится, остальное приложение всё равно работает -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
 <script>
   // ---------- Хранение данных ----------
   // localStorage (локал сторидж) — маленькая память внутри браузера телефона.
@@ -256,10 +332,13 @@
     var p = parseFloat($('price').value);
     if (l >= 0) { data.settings.l100 = l; }
     if (p >= 0) { data.settings.price = p; }
+    var c = $('city').value.trim();
+    if (c) { data.settings.city = c; }
     save();
   }
   $('l100').addEventListener('change', saveSettings);
   $('price').addEventListener('change', saveSettings);
+  $('city').addEventListener('change', saveSettings);
 
   $('export').addEventListener('click', function () {
     var blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -292,12 +371,192 @@
     this.value = '';
   });
 
+  // ---------- Вкладки ----------
+  function showView(v) {
+    $('view-diary').hidden = (v !== 'diary');
+    $('view-addr').hidden = (v !== 'addr');
+    var b = $('nav').querySelectorAll('button');
+    for (var i = 0; i < b.length; i++) {
+      b[i].setAttribute('aria-pressed', b[i].getAttribute('data-v') === v ? 'true' : 'false');
+    }
+    if (v === 'addr') { initMap(); renderClients(); }
+  }
+  $('nav').addEventListener('click', function (e) {
+    var v = e.target.getAttribute('data-v');
+    if (v) { showView(v); }
+  });
+
+  // ---------- Карта (OpenStreetMap через Leaflet) ----------
+  var map = null;
+  var marker = null;
+
+  function initMap() {
+    if (map) { setTimeout(function () { map.invalidateSize(); }, 50); return; }
+    if (typeof L === 'undefined') {
+      $('map').textContent = 'Карта не загрузилась. Проверьте интернет. Список адресов и кнопки 2ГИС и Яндекс работают и без неё.';
+      return;
+    }
+    map = L.map('map').setView([67.37, 32.5], 14);   // примерно центр Полярных Зорей
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '© участники OpenStreetMap'
+    }).addTo(map);
+  }
+
+  function fullAddress(c) {
+    return data.settings.city + ', ' + c.street + ' ' + c.house;
+  }
+
+  function placeMarker(c) {
+    if (marker) { marker.remove(); }
+    var pop = document.createElement('div');
+    pop.textContent = c.street + ' ' + c.house;
+    marker = L.marker([c.lat, c.lon]).addTo(map).bindPopup(pop).openPopup();
+    map.setView([c.lat, c.lon], 17);
+  }
+
+  // Поиск адреса на карте: сервис Nominatim (Номинатим) от OpenStreetMap, бесплатный
+  function showOnMap(c) {
+    var status = $('map-status');
+    if (!map) { status.textContent = 'Карта не загрузилась. Откройте адрес в 2ГИС или Яндекс Картах.'; return; }
+    window.scrollTo(0, 0);
+    if (c.lat) { placeMarker(c); status.textContent = ''; return; }
+    status.textContent = 'Ищем адрес…';
+    fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&accept-language=ru&q=' + encodeURIComponent(fullAddress(c)))
+      .then(function (r) { return r.json(); })
+      .then(function (res) {
+        if (res && res.length) {
+          c.lat = parseFloat(res[0].lat);
+          c.lon = parseFloat(res[0].lon);
+          save();
+          placeMarker(c);
+          status.textContent = '';
+        } else {
+          status.textContent = 'Этот адрес не найден на карте OpenStreetMap. Откройте его в 2ГИС или Яндекс Картах.';
+        }
+      })
+      .catch(function () {
+        status.textContent = 'Не удалось связаться с картой. Проверьте интернет.';
+      });
+  }
+
+  // ---------- Адреса клиентов ----------
+  $('a-add').addEventListener('click', function () {
+    var street = $('a-street').value.trim();
+    var house = $('a-house').value.trim();
+    if (!street || !house) { alert('Впишите улицу и дом.'); return; }
+    data.clients.push({
+      id: Date.now(),
+      street: street,
+      house: house,
+      entrance: $('a-entrance').value.trim(),
+      floor: $('a-floor').value.trim(),
+      flat: $('a-flat').value.trim(),
+      code: $('a-code').value.trim(),
+      note: $('a-note').value.trim(),
+      lat: null,
+      lon: null
+    });
+    save();
+    ['a-street', 'a-house', 'a-entrance', 'a-floor', 'a-flat', 'a-code', 'a-note'].forEach(function (id) { $(id).value = ''; });
+    renderClients();
+  });
+
+  $('a-search').addEventListener('input', renderClients);
+
+  function describe(c) {
+    var parts = [];
+    if (c.entrance) { parts.push('подъезд ' + c.entrance); }
+    if (c.floor) { parts.push('этаж ' + c.floor); }
+    if (c.flat) { parts.push('кв. ' + c.flat); }
+    if (c.code) { parts.push('домофон: ' + c.code); }
+    if (c.note) { parts.push(c.note); }
+    return parts.join(', ');
+  }
+
+  function renderClients() {
+    var q = $('a-search').value.trim().toLowerCase();
+    var list = $('a-list');
+    list.innerHTML = '';
+    var items = data.clients.filter(function (c) {
+      return !q || (c.street + ' ' + c.house + ' ' + describe(c)).toLowerCase().indexOf(q) !== -1;
+    }).sort(function (a, b) {
+      return (a.street + ' ' + a.house).localeCompare(b.street + ' ' + b.house, 'ru', { numeric: true });
+    });
+    if (items.length === 0) {
+      var empty = document.createElement('li');
+      empty.className = 'empty';
+      empty.textContent = data.clients.length === 0 ? 'Пока нет адресов. Добавьте первый выше.' : 'Ничего не найдено.';
+      list.appendChild(empty);
+      return;
+    }
+    items.forEach(function (c) {
+      var li = document.createElement('li');
+      li.className = 'client';
+
+      var top = document.createElement('div');
+      top.className = 'client-top';
+      var box = document.createElement('div');
+      var main = document.createElement('div');
+      main.className = 'li-main';
+      main.textContent = c.street + ' ' + c.house;
+      var sub = document.createElement('div');
+      sub.className = 'li-sub';
+      sub.textContent = describe(c) || 'Без подробностей';
+      box.appendChild(main);
+      box.appendChild(sub);
+      var del = document.createElement('button');
+      del.className = 'del';
+      del.type = 'button';
+      del.setAttribute('aria-label', 'Удалить адрес');
+      del.textContent = '×';
+      del.addEventListener('click', function () {
+        if (confirm('Удалить этот адрес?')) {
+          data.clients = data.clients.filter(function (x) { return x.id !== c.id; });
+          save();
+          renderClients();
+        }
+      });
+      top.appendChild(box);
+      top.appendChild(del);
+
+      var actions = document.createElement('div');
+      actions.className = 'actions';
+      var onMap = document.createElement('button');
+      onMap.type = 'button';
+      onMap.textContent = 'На карте';
+      onMap.addEventListener('click', function () { showOnMap(c); });
+      var gis = document.createElement('a');
+      gis.textContent = 'Открыть в 2ГИС';
+      gis.href = 'https://2gis.ru/search/' + encodeURIComponent(fullAddress(c));
+      gis.target = '_blank';
+      gis.rel = 'noopener';
+      var ya = document.createElement('a');
+      ya.textContent = 'Открыть в Яндекс Картах';
+      ya.href = 'https://yandex.ru/maps/?text=' + encodeURIComponent(fullAddress(c));
+      ya.target = '_blank';
+      ya.rel = 'noopener';
+      actions.appendChild(onMap);
+      actions.appendChild(gis);
+      actions.appendChild(ya);
+
+      li.appendChild(top);
+      li.appendChild(actions);
+      list.appendChild(li);
+    });
+  }
+
   // ---------- Запуск ----------
   function start() {
+    // Если данные старые (без адресов и города), добавляем недостающее
+    if (!Array.isArray(data.clients)) { data.clients = []; }
+    if (!data.settings.city) { data.settings.city = 'Полярные Зори, Мурманская область'; }
     $('l100').value = data.settings.l100;
     $('price').value = data.settings.price;
+    $('city').value = data.settings.city;
     $('date').value = iso(new Date());
     render();
+    renderClients();
   }
   start();
 </script>
