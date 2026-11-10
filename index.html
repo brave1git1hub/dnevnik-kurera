@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Дневник курьера</title>
+<style>
+  /* Цвета: снег, ночная синева, сигнальный жёлтый как у курьерской сумки */
+  :root {
+    --snow: #eef3f6;
+    --card: #ffffff;
+    --ink: #16283a;
+    --muted: #5d6f80;
+    --line: #d3dde5;
+    --signal: #f2b705;
+    --profit: #17794c;
+    --loss: #b3261e;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--snow);
+    color: var(--ink);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+    line-height: 1.4;
+  }
+  main { max-width: 560px; margin: 0 auto; padding: 16px 16px 48px; }
+  h1 { font-size: 1.5rem; margin: 8px 0 16px; }
+  h2 { font-size: 1.05rem; margin: 0 0 12px; }
+  section, details { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+  summary { cursor: pointer; font-weight: 600; }
+
+  .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+  .tabs button { flex: 1; padding: 10px; border: 1px solid var(--line); background: var(--snow); border-radius: 8px; font-size: 1rem; color: var(--ink); }
+  .tabs button[aria-pressed="true"] { background: var(--signal); border-color: var(--signal); font-weight: 700; }
+
+  .hero-label { color: var(--muted); font-size: 0.95rem; }
+  .hero-value { font-size: 2.75rem; font-weight: 800; letter-spacing: -0.02em; margin: 2px 0 16px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .grid div { border-top: 1px solid var(--line); padding-top: 8px; }
+  .grid .v { font-size: 1.2rem; font-weight: 700; }
+  .grid .l { color: var(--muted); font-size: 0.85rem; }
+
+  label { display: block; font-size: 0.9rem; color: var(--muted); margin: 10px 0 4px; }
+  input { width: 100%; padding: 12px; font-size: 1rem; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); }
+  .row { display: flex; gap: 12px; }
+  .row > div { flex: 1; }
+  .primary { width: 100%; margin-top: 16px; padding: 14px; font-size: 1.05rem; font-weight: 700; border: 0; border-radius: 10px; background: var(--signal); color: var(--ink); }
+  .secondary { padding: 10px 14px; font-size: 0.95rem; border: 1px solid var(--line); border-radius: 8px; background: var(--snow); color: var(--ink); }
+  button:focus-visible, input:focus-visible, summary:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
+
+  ul { list-style: none; margin: 0; padding: 0; }
+  li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 0; border-top: 1px solid var(--line); }
+  li:first-child { border-top: 0; }
+  .li-main { font-weight: 600; }
+  .li-sub { color: var(--muted); font-size: 0.85rem; }
+  .del { border: 0; background: none; font-size: 1.4rem; color: var(--muted); padding: 6px 10px; }
+  .empty { color: var(--muted); }
+  .hint { color: var(--muted); font-size: 0.85rem; margin-top: 8px; }
+  .buttons { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  .pos { color: var(--profit); }
+  .neg { color: var(--loss); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Дневник курьера</h1>
+
+  <section aria-label="Итоги">
+    <div class="tabs" id="tabs">
+      <button type="button" data-p="day" aria-pressed="true">Сегодня</button>
+      <button type="button" data-p="week" aria-pressed="false">Неделя</button>
+      <button type="button" data-p="month" aria-pressed="false">Месяц</button>
+    </div>
+    <div class="hero-label">Чистая прибыль</div>
+    <div class="hero-value" id="net">0 ₽</div>
+    <div class="grid">
+      <div><div class="v" id="earned">0 ₽</div><div class="l">Заработано</div></div>
+      <div><div class="v" id="fuel">0 ₽</div><div class="l">Бензин</div></div>
+      <div><div class="v" id="km">0 км</div><div class="l">Проехано</div></div>
+      <div><div class="v" id="perkm">0 ₽</div><div class="l">Прибыль за 1 км</div></div>
+    </div>
+  </section>
+
+  <section aria-label="Новый заказ">
+    <h2>Новый заказ</h2>
+    <label for="sum">Сколько заплатили, ₽</label>
+    <input id="sum" type="number" inputmode="decimal" min="0" placeholder="например, 350">
+    <div class="row">
+      <div>
+        <label for="dist">Сколько проехали, км</label>
+        <input id="dist" type="number" inputmode="decimal" min="0" placeholder="например, 4.5">
+      </div>
+      <div>
+        <label for="date">Дата</label>
+        <input id="date" type="date">
+      </div>
+    </div>
+    <button class="primary" id="add" type="button">Добавить заказ</button>
+  </section>
+
+  <section aria-label="Заказы за период">
+    <h2>Заказы за выбранный период</h2>
+    <ul id="list"></ul>
+  </section>
+
+  <details>
+    <summary>Настройки бензина</summary>
+    <label for="l100">Расход машины, литров на 100 км</label>
+    <input id="l100" type="number" inputmode="decimal" min="0" step="0.1">
+    <label for="price">Цена литра бензина, ₽</label>
+    <input id="price" type="number" inputmode="decimal" min="0" step="0.1">
+    <p class="hint">Эти числа используются при добавлении нового заказа. Старые заказы не пересчитываются.</p>
+  </details>
+
+  <details>
+    <summary>Копия данных</summary>
+    <p class="hint">Все данные хранятся только в этом телефоне. Сохраняйте копию раз в неделю.</p>
+    <div class="buttons">
+      <button class="secondary" id="export" type="button">Сохранить копию</button>
+      <button class="secondary" id="import-btn" type="button">Загрузить копию</button>
+      <input id="import" type="file" accept="application/json,.json" hidden>
+    </div>
+  </details>
+</main>
+
+<script>
+  // ---------- Хранение данных ----------
+  // localStorage (локал сторидж) — маленькая память внутри браузера телефона.
+  var KEY = 'kurier-diary-v1';
+  var data = load();
+
+  function load() {
+    try {
+      var raw = localStorage.getItem(KEY);
+      if (raw) { return JSON.parse(raw); }
+    } catch (e) { /* если не вышло, начнём с пустых данных */ }
+    return { orders: [], settings: { l100: 8, price: 60 } };
+  }
+
+  function save() {
+    try {
+      localStorage.setItem(KEY, JSON.stringify(data));
+    } catch (e) {
+      alert('Не удалось сохранить данные. Возможно, в браузере отключена память сайтов.');
+    }
+  }
+
+  // ---------- Вспомогательные функции ----------
+  var period = 'day';
+  var money = new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'RUB', maximumFractionDigits: 0 });
+  var num = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 1 });
+
+  function pad(n) { return n < 10 ? '0' + n : '' + n; }
+  function iso(d) { return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
+  function $(id) { return document.getElementById(id); }
+
+  // Начало выбранного периода в виде текста «ГГГГ-ММ-ДД»
+  function periodStart() {
+    var now = new Date();
+    if (period === 'day') { return iso(now); }
+    if (period === 'month') { return now.getFullYear() + '-' + pad(now.getMonth() + 1) + '-01'; }
+    var back = (now.getDay() + 6) % 7;            // сколько дней назад был понедельник
+    var monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - back);
+    return iso(monday);
+  }
+
+  function inPeriod(o) { return o.date >= periodStart() && o.date <= iso(new Date()); }
+
+  function showDate(s) {
+    var p = String(s).split('-');
+    return p.length === 3 ? p[2] + '.' + p[1] + '.' + p[0] : s;
+  }
+
+  // ---------- Показ на экране ----------
+  function render() {
+    var items = data.orders.filter(inPeriod);
+    var earned = 0, km = 0, fuel = 0;
+    items.forEach(function (o) { earned += o.sum; km += o.km; fuel += o.fuel; });
+    var net = earned - fuel;
+
+    var netEl = $('net');
+    netEl.textContent = money.format(net);
+    netEl.className = 'hero-value ' + (net > 0 ? 'pos' : net < 0 ? 'neg' : '');
+    $('earned').textContent = money.format(earned);
+    $('fuel').textContent = money.format(fuel);
+    $('km').textContent = num.format(km) + ' км';
+    $('perkm').textContent = km > 0 ? money.format(net / km) : '—';
+
+    var list = $('list');
+    list.innerHTML = '';
+    if (items.length === 0) {
+      var empty = document.createElement('li');
+      empty.className = 'empty';
+      empty.textContent = 'Пока нет заказов. Добавьте первый выше.';
+      list.appendChild(empty);
+    }
+    items.slice().sort(function (a, b) {
+      return a.date === b.date ? b.id - a.id : (a.date < b.date ? 1 : -1);
+    }).forEach(function (o) {
+      var li = document.createElement('li');
+      var box = document.createElement('div');
+      var main = document.createElement('div');
+      main.className = 'li-main';
+      main.textContent = money.format(o.sum);
+      var sub = document.createElement('div');
+      sub.className = 'li-sub';
+      sub.textContent = showDate(o.date) + ', ' + num.format(o.km) + ' км, бензин ' + money.format(o.fuel);
+      box.appendChild(main);
+      box.appendChild(sub);
+      var del = document.createElement('button');
+      del.className = 'del';
+      del.type = 'button';
+      del.setAttribute('aria-label', 'Удалить заказ');
+      del.textContent = '×';
+      del.addEventListener('click', function () {
+        if (confirm('Удалить этот заказ?')) {
+          data.orders = data.orders.filter(function (x) { return x.id !== o.id; });
+          save();
+          render();
+        }
+      });
+      li.appendChild(box);
+      li.appendChild(del);
+      list.appendChild(li);
+    });
+  }
+
+  // ---------- Кнопки ----------
+  $('tabs').addEventListener('click', function (e) {
+    var p = e.target.getAttribute('data-p');
+    if (!p) { return; }
+    period = p;
+    var buttons = $('tabs').querySelectorAll('button');
+    for (var i = 0; i < buttons.length; i++) {
+      buttons[i].setAttribute('aria-pressed', buttons[i].getAttribute('data-p') === p ? 'true' : 'false');
+    }
+    render();
+  });
+
+  $('add').addEventListener('click', function () {
+    var sum = parseFloat($('sum').value);
+    var km = parseFloat($('dist').value) || 0;
+    var date = $('date').value || iso(new Date());
+    if (!(sum >= 0) || isNaN(sum)) { alert('Впишите сумму заказа.'); return; }
+    var fuel = km * (data.settings.l100 / 100) * data.settings.price;
+    data.orders.push({ id: Date.now(), date: date, sum: sum, km: km, fuel: fuel });
+    save();
+    $('sum').value = '';
+    $('dist').value = '';
+    render();
+  });
+
+  function saveSettings() {
+    var l = parseFloat($('l100').value);
+    var p = parseFloat($('price').value);
+    if (l >= 0) { data.settings.l100 = l; }
+    if (p >= 0) { data.settings.price = p; }
+    save();
+  }
+  $('l100').addEventListener('change', saveSettings);
+  $('price').addEventListener('change', saveSettings);
+
+  $('export').addEventListener('click', function () {
+    var blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'dnevnik-kurera-' + iso(new Date()) + '.json';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  });
+
+  $('import-btn').addEventListener('click', function () { $('import').click(); });
+  $('import').addEventListener('change', function () {
+    var file = this.files[0];
+    if (!file) { return; }
+    var reader = new FileReader();
+    reader.onload = function () {
+      try {
+        var obj = JSON.parse(reader.result);
+        if (!Array.isArray(obj.orders) || !obj.settings) { throw new Error('bad'); }
+        if (!confirm('Заменить текущие данные данными из копии?')) { return; }
+        data = obj;
+        save();
+        start();
+      } catch (e) {
+        alert('Этот файл не похож на копию Дневника.');
+      }
+    };
+    reader.readAsText(file);
+    this.value = '';
+  });
+
+  // ---------- Запуск ----------
+  function start() {
+    $('l100').value = data.settings.l100;
+    $('price').value = data.settings.price;
+    $('date').value = iso(new Date());
+    render();
+  }
+  start();
+</script>
+</body>
+</html>
